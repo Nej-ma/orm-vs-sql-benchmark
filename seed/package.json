@@ -1,0 +1,13 @@
+{
+  "name": "seeder",
+  "version": "1.0.0",
+  "description": "ADS Benchmark - Data seeder",
+  "main": "seed.js",
+  "scripts": {
+    "start": "node seed.js"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^8.4.1",
+    "pg": "^8.12.0"
+  }
+}

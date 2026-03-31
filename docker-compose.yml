@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ads_postgres
+    environment:
+      POSTGRES_USER: ads
+      POSTGRES_PASSWORD: ads_secret
+      POSTGRES_DB: ads_benchmark
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ads -d ads_benchmark"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sql-api:
+    build:
+      context: ./sql-api
+      dockerfile: Dockerfile
+    container_name: ads_sql_api
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ads
+      DB_PASSWORD: ads_secret
+      DB_NAME: ads_benchmark
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  orm-api:
+    build:
+      context: ./orm-api
+      dockerfile: Dockerfile
+    container_name: ads_orm_api
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      DATABASE_URL: "postgresql://ads:ads_secret@postgres:5432/ads_benchmark"
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  seeder:
+    build:
+      context: ./seed
+      dockerfile: Dockerfile
+    container_name: ads_seeder
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ads
+      DB_PASSWORD: ads_secret
+      DB_NAME: ads_benchmark
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - seed
+
+volumes:
+  postgres_data:
