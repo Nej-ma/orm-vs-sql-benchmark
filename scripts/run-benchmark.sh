@@ -94,6 +94,7 @@ run_scenario() {
     local k6_out="//results/${run_subdir}/$(basename "$out_json")"
     local k6_summary="//results/${run_subdir}/$(basename "$summary_json")"
 
+    # Note: k6 exits with code 99 when thresholds are crossed — we log but don't abort
     (cd "${ROOT_DIR}" && docker compose run --rm \
       --no-deps \
       k6 run \
@@ -101,7 +102,7 @@ run_scenario() {
         --out "json=${k6_out}" \
         --summary-export "${k6_summary}" \
         "${k6_scenario}") \
-      2>&1 | tee "$out_log"
+      2>&1 | tee "$out_log" || echo "  [k6 exited non-zero — threshold crossed or run error, continuing]"
 
     kill "$stats_pid" 2>/dev/null || true
 
