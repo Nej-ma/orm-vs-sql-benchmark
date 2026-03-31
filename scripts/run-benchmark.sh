@@ -86,17 +86,21 @@ run_scenario() {
 
     # Run k6 inside Docker on the same network
     # Use // prefix to prevent Git Bash path conversion on Windows
+    # cd to ROOT_DIR so docker compose finds docker-compose.yml without -f (avoids MSYS path issues)
+    # Include the run subdirectory name in k6 output paths so files land in the correct run folder
+    local run_subdir
+    run_subdir=$(basename "$RUN_DIR")
     local k6_scenario="//scripts/scenarios/$(basename "$scenario_file")"
-    local k6_out="//results/$(basename "$out_json")"
-    local k6_summary="//results/$(basename "$summary_json")"
+    local k6_out="//results/${run_subdir}/$(basename "$out_json")"
+    local k6_summary="//results/${run_subdir}/$(basename "$summary_json")"
 
-    docker compose -f "${ROOT_DIR}/docker-compose.yml" run --rm \
+    (cd "${ROOT_DIR}" && docker compose run --rm \
       --no-deps \
       k6 run \
         --env "BASE_URL=${base_url}" \
         --out "json=${k6_out}" \
         --summary-export "${k6_summary}" \
-        "${k6_scenario}" \
+        "${k6_scenario}") \
       2>&1 | tee "$out_log"
 
     kill "$stats_pid" 2>/dev/null || true
