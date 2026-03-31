@@ -111,8 +111,9 @@ This schema deliberately triggers the join scenarios where ORM and raw SQL most 
 
 ### Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- [k6](https://k6.io/docs/get-started/installation/) (for running load tests locally)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — that's it.
+
+k6 runs as a Docker container (`grafana/k6:latest`) on the same network as the APIs — no local installation needed.
 
 ### 1. Start the stack
 
@@ -137,12 +138,20 @@ Inserts **10 000 users · 30 000 posts · 20 tags · ~75 000 post-tag associatio
 
 ### 3. Run a single scenario (manual)
 
+k6 runs inside Docker on the same network as the APIs, so internal service names are used as hostnames.
+
+> **Windows (Git Bash) note:** prefix commands with `MSYS_NO_PATHCONV=1` to prevent Git Bash from rewriting `/scripts/` as a Windows path.
+
 ```bash
 # Against raw SQL API
-k6 run --env BASE_URL=http://localhost:3001 k6/scenarios/03-read-heavy.js
+MSYS_NO_PATHCONV=1 docker compose run --rm k6 run \
+  --env BASE_URL=http://sql-api:3001 \
+  //scripts/scenarios/03-read-heavy.js
 
-# Against Prisma API
-k6 run --env BASE_URL=http://localhost:3002 k6/scenarios/03-read-heavy.js
+# Against Prisma ORM API
+MSYS_NO_PATHCONV=1 docker compose run --rm k6 run \
+  --env BASE_URL=http://orm-api:3002 \
+  //scripts/scenarios/03-read-heavy.js
 ```
 
 ### 4. Run the full benchmark suite

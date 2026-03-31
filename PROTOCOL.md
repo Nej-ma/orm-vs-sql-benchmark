@@ -48,27 +48,30 @@ Both images are built from the same base (`node:20-alpine`) and deployed via the
 
 ### 2.3 Test Machine
 
-> **Fill in before running the benchmark:**
+All experiments were conducted on the following hardware:
 
-```
-OS:           Windows 11 Pro
-CPU:          [e.g. Intel Core i7-12700H, 14 cores]
-RAM:          [e.g. 16 GB DDR5]
-Storage:      [e.g. NVMe SSD 512 GB]
-Docker:       Docker Desktop [version]
-Node.js:      v20.x.x (inside container)
-k6:           [version]
-```
+| Property | Value |
+|---|---|
+| Device | Lenovo IdeaPad Gaming 3 15ACH6 |
+| CPU | AMD Ryzen 5 5600H with Radeon Graphics (6 cores / 12 threads, 3.3–4.2 GHz) |
+| RAM | 32 GB DDR4 (27.9 GB usable) |
+| OS | Windows 11 Pro |
+| Docker | Docker Desktop 4.41.2 (Linux engine via WSL2) |
+| Node.js | v20.20.2 (inside container — `node:20-alpine`) |
+| k6 | v1.7.1 (`grafana/k6:latest` Docker image) |
 
-To capture your current machine specs:
-```bash
-# CPU & RAM
-wmic cpu get name && wmic memorychip get capacity
-# Docker version
-docker version --format '{{.Server.Version}}'
-# k6 version
-k6 version
-```
+> **Note:** All services (PostgreSQL, sql-api, orm-api, k6) run inside Docker containers on the same bridge network. No network hop crosses the host OS, so latency measurements reflect pure application and ORM overhead, not networking.
+
+### 2.4 k6 Execution Environment
+
+k6 runs as a Docker container on the same Compose network as the APIs. Internal service hostnames are used — no localhost round-trip:
+
+| Service | Internal URL (k6 → API) | External URL (browser/curl) |
+|---|---|---|
+| sql-api | `http://sql-api:3001` | `http://localhost:3001` |
+| orm-api | `http://orm-api:3002` | `http://localhost:3002` |
+
+This approach makes the benchmark **fully self-contained and reproducible** on any machine running Docker Desktop.
 
 ---
 
@@ -176,12 +179,14 @@ This avoids thermal throttling and ensures the database buffer cache is in a com
 bash scripts/run-benchmark.sh
 ```
 
-To run a single scenario manually:
+To run a single scenario manually (Windows Git Bash):
 
 ```bash
-k6 run --env BASE_URL=http://localhost:3001 \
-       --out json=results/manual_sql.json \
-       k6/scenarios/03-read-heavy.js
+# MSYS_NO_PATHCONV=1 prevents Git Bash from converting /scripts/ to a Windows path
+MSYS_NO_PATHCONV=1 docker compose run --rm k6 run \
+  --env BASE_URL=http://sql-api:3001 \
+  --out json=//results/manual_sql.json \
+  //scripts/scenarios/03-read-heavy.js
 ```
 
 ---

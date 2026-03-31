@@ -72,5 +72,19 @@ services:
     profiles:
       - seed
 
+  # k6 load testing — runs on the same Docker network as the APIs
+  # Usage: docker compose run --rm k6 run --env BASE_URL=http://sql-api:3001 /scripts/scenarios/01-smoke.js
+  k6:
+    image: grafana/k6:latest
+    container_name: ads_k6
+    volumes:
+      - ./k6:/scripts
+      - ./results:/results
+    depends_on:
+      - sql-api
+      - orm-api
+    profiles:
+      - k6
+
 volumes:
   postgres_data:

@@ -1,16 +1,28 @@
 #!/usr/bin/env bash
 # =============================================================
 # ADS Benchmark – Script principal
-# Lance chaque scénario k6 sur sql-api ET orm-api,
-# collecte les métriques CPU/RAM pendant les tests,
-# et sauvegarde tous les résultats dans ./results/
+#
+# Lance chaque scénario k6 sur sql-api ET orm-api via Docker,
+# collecte les métriques CPU/RAM, et sauvegarde tout dans results/.
+#
+# Usage :
+#   bash scripts/run-benchmark.sh              # tous les scénarios
+#   bash scripts/run-benchmark.sh 02 04        # scénarios 02 et 04 seulement
 # =============================================================
 
 set -euo pipefail
 
-SQL_URL="http://localhost:3001"
-ORM_URL="http://localhost:3002"
-RESULTS_DIR="$(dirname "$0")/../results"
+# URLs internes au réseau Docker (noms de services docker-compose)
+SQL_URL="http://sql-api:3001"
+ORM_URL="http://orm-api:3002"
+
+# URLs host pour les health checks (depuis la machine hôte)
+SQL_HOST_URL="http://localhost:3001"
+ORM_HOST_URL="http://localhost:3002"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+RESULTS_DIR="${ROOT_DIR}/results"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 RUN_DIR="${RESULTS_DIR}/run_${TIMESTAMP}"
 
@@ -24,55 +36,81 @@ echo "=================================================="
 
 check_api() {
   local url=$1 name=$2
-  echo -n "Checking ${name} at ${url}/health ... "
-  if curl -sf "${url}/health" > /dev/null; then
+  echo -n "  Checking ${name} at ${url}/health ... "
+  if curl -sf "${url}/health" > /dev/null 2>&1; then
     echo "OK"
   else
-    echo "FAIL – is the API running?"
+    echo "FAIL"
+    echo "  Is the stack running? Try: docker compose up -d"
     exit 1
   fi
 }
 
 run_scenario() {
-  local scenario_file=$1
-  local base_url=$2
-  local impl_name=$3
+  local scenario_num=$1
+  local scenario_file
+  scenario_file=$(find "${ROOT_DIR}/k6/scenarios" -name "${scenario_num}-*.js" | head -1)
+
+  if [ -z "$scenario_file" ]; then
+    echo "  WARNING: no scenario matching '${scenario_num}-*.js', skipping."
+    return
+  fi
+
   local scenario_name
   scenario_name=$(basename "$scenario_file" .js)
 
-  local out_json="${RUN_DIR}/${scenario_name}_${impl_name}.json"
-  local out_log="${RUN_DIR}/${scenario_name}_${impl_name}.log"
-  local metrics_csv="${RUN_DIR}/${scenario_name}_${impl_name}_docker_stats.csv"
+  for impl in "sql" "orm"; do
+    local base_url stats_container
+    if [ "$impl" = "sql" ]; then
+      base_url="$SQL_URL"
+      stats_container="ads_sql_api"
+    else
+      base_url="$ORM_URL"
+      stats_container="ads_orm_api"
+    fi
 
-  echo ""
-  echo ">>> Scenario: ${scenario_name} | Implementation: ${impl_name}"
-  echo "    Output: ${out_json}"
+    local out_json="${RUN_DIR}/${scenario_name}_${impl}.json"
+    local summary_json="${RUN_DIR}/${scenario_name}_${impl}_summary.json"
+    local out_log="${RUN_DIR}/${scenario_name}_${impl}.log"
+    local stats_csv="${RUN_DIR}/${scenario_name}_${impl}_docker_stats.csv"
 
-  # Start collecting docker stats in the background
-  collect_docker_stats "$metrics_csv" &
-  local stats_pid=$!
+    echo ""
+    echo ">>> Scenario: ${scenario_name} | Implementation: ${impl}"
 
-  # Run k6
-  k6 run \
-    --env BASE_URL="${base_url}" \
-    --out "json=${out_json}" \
-    --summary-export "${out_json%.json}_summary.json" \
-    "$scenario_file" 2>&1 | tee "$out_log"
+    # Collect docker stats in background
+    collect_docker_stats "$stats_csv" "$stats_container" &
+    local stats_pid=$!
 
-  # Stop docker stats collection
-  kill "$stats_pid" 2>/dev/null || true
+    # Run k6 inside Docker on the same network
+    docker compose -f "${ROOT_DIR}/docker-compose.yml" run --rm \
+      --no-deps \
+      k6 run \
+        --env "BASE_URL=${base_url}" \
+        --out "json=/results/$(basename "$out_json")" \
+        --summary-export "/results/$(basename "$summary_json")" \
+        "/scripts/scenarios/$(basename "$scenario_file")" \
+      2>&1 | tee "$out_log"
 
-  echo "    Done."
+    kill "$stats_pid" 2>/dev/null || true
+
+    if [ "$impl" = "sql" ]; then
+      echo "  Cooling down 15 s..."
+      sleep 15
+    else
+      echo "  Cooling down 30 s..."
+      sleep 30
+    fi
+  done
 }
 
 collect_docker_stats() {
   local output_file=$1
+  local target_container=$2
   echo "timestamp,container,cpu_pct,mem_usage,mem_pct" > "$output_file"
-
   while true; do
     docker stats --no-stream --format \
       "{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}}" \
-      ads_sql_api ads_orm_api ads_postgres 2>/dev/null \
+      "$target_container" ads_postgres 2>/dev/null \
     | while IFS= read -r line; do
         echo "$(date +%s),${line}"
       done >> "$output_file"
@@ -81,47 +119,44 @@ collect_docker_stats() {
 }
 
 count_loc() {
-  echo ""
-  echo "=== Lines of Code (LOC) ==="
-  echo "sql-api:"
-  find "$(dirname "$0")/../sql-api/src" -name "*.js" | xargs wc -l 2>/dev/null | tail -1
-  echo "orm-api:"
-  find "$(dirname "$0")/../orm-api/src" -name "*.js" | xargs wc -l 2>/dev/null | tail -1
-  echo "orm-api schema.prisma:"
-  wc -l "$(dirname "$0")/../orm-api/prisma/schema.prisma" 2>/dev/null || echo "0"
+  {
+    echo ""
+    echo "=== Lines of Code ==="
+    echo "sql-api (src/):"
+    find "${ROOT_DIR}/sql-api/src" -name "*.js" -exec wc -l {} + 2>/dev/null | tail -1 | awk '{print "  "$1" lines"}'
+    echo "orm-api (src/):"
+    find "${ROOT_DIR}/orm-api/src" -name "*.js" -exec wc -l {} + 2>/dev/null | tail -1 | awk '{print "  "$1" lines"}'
+    echo "orm-api (schema.prisma):"
+    wc -l "${ROOT_DIR}/orm-api/prisma/schema.prisma" 2>/dev/null | awk '{print "  "$1" lines"}'
+  } | tee "${RUN_DIR}/loc_report.txt"
 }
 
 # ---- main ----
 
-check_api "$SQL_URL" "sql-api"
-check_api "$ORM_URL" "orm-api"
+echo ""
+echo "Checking APIs..."
+check_api "$SQL_HOST_URL" "sql-api"
+check_api "$ORM_HOST_URL" "orm-api"
 
-SCENARIOS=(
-  "$(dirname "$0")/../k6/scenarios/01-smoke.js"
-  "$(dirname "$0")/../k6/scenarios/02-crud.js"
-  "$(dirname "$0")/../k6/scenarios/03-read-heavy.js"
-  "$(dirname "$0")/../k6/scenarios/04-complex-queries.js"
-  "$(dirname "$0")/../k6/scenarios/05-stress.js"
-)
-
-# Run only scenarios passed as arguments, or all if none
+# Determine which scenarios to run
+ALL_SCENARIOS=("01" "02" "03" "04" "05")
 if [ $# -gt 0 ]; then
   SCENARIOS=("$@")
+else
+  SCENARIOS=("${ALL_SCENARIOS[@]}")
 fi
 
-for scenario in "${SCENARIOS[@]}"; do
-  run_scenario "$scenario" "$SQL_URL" "sql"
-  echo "  Cooling down 15s..."
-  sleep 15
-  run_scenario "$scenario" "$ORM_URL" "orm"
-  echo "  Cooling down 30s..."
-  sleep 30
+echo ""
+echo "Running scenarios: ${SCENARIOS[*]}"
+
+for num in "${SCENARIOS[@]}"; do
+  run_scenario "$num"
 done
 
-count_loc | tee "${RUN_DIR}/loc_report.txt"
+count_loc
 
 echo ""
 echo "=================================================="
 echo " All results saved in: ${RUN_DIR}"
 echo "=================================================="
-echo " Next step: run scripts/analyze-results.sh ${RUN_DIR}"
+echo " Analyze: bash scripts/analyze-results.sh ${RUN_DIR}"
