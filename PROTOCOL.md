@@ -11,6 +11,8 @@
 
 > In which scenarios does an ORM (Prisma) genuinely improve developer productivity without degrading the performance of a Node.js REST API beyond an acceptable threshold, compared to a native SQL approach (pg driver)?
 
+**Acceptable threshold definition:** In this study, the acceptable performance overhead is defined as a **P95 latency increase of 20% or less** compared to raw SQL under the same workload and concurrency level. Beyond this threshold, the ORM is considered to impose a non-negligible performance cost that must be explicitly justified by productivity gains.
+
 ### Hypotheses
 
 | # | Hypothesis |
@@ -247,7 +249,7 @@ Captured automatically by `run-benchmark.sh` into `loc_report.txt`.
 | Same PostgreSQL instance | Eliminates network and DB tuning variables |
 | Same dataset and indexes | Identical query planner conditions |
 | Same connection pool size (max=20) | Normalizes concurrency capacity |
-| No manual SQL optimization | Reflects real-world usage, not expert tuning |
+| No manual SQL optimization | No hand-tuned SQL beyond what is necessary to implement the selected endpoints. No stored procedures, no query hints, no custom indexing beyond the shared schema defined in `init.sql` |
 | No application-level cache | Isolates the ORM variable from caching effects |
 | Sequential test runs with cooldown | Prevents resource contention between implementations |
 | Single Node.js process per container | No cluster-mode advantage for either implementation |
@@ -268,15 +270,19 @@ A result is considered **statistically meaningful** when:
 
 ### 7.3 Developer Productivity Assessment
 
-Productivity is assessed qualitatively alongside LOC counts:
+Productivity is assessed using a combination of factual metrics and structured qualitative evaluation:
 
-| Dimension | What we measure |
+| Dimension | Method |
 |---|---|
-| Schema definition | Does Prisma's schema add meaningful overhead? |
-| Migration tooling | Ease of schema evolution |
-| Query expressiveness | How readable are complex join queries in each approach? |
-| Error handling | Are errors more explicit in raw SQL or through the ORM? |
-| Development time | Time to implement the same feature (estimated) |
+| Lines of code (LOC) | Counted automatically via `wc -l` on `src/**/*.js` |
+| Schema definition overhead | LOC in `prisma/schema.prisma` vs `init.sql` |
+| Number of source files | `find src/ -name '*.js' \| wc -l` for each implementation |
+| Implementation-specific concepts | Count of ORM-specific constructs (migrations, Prisma Client setup, `include`, `select`, generated types) vs plain SQL equivalents |
+| Actual implementation time | Time tracked in development log per implementation (see `dev-log.md`) |
+| Query expressiveness | Structured qualitative comparison for each query type (simple, 1-N, N-N) |
+| Error transparency | Is the error surfaced from the DB or wrapped by the ORM layer? |
+
+> **Note on implementation time:** Both implementations were built sequentially in the same session. The sql-api was implemented first; the orm-api second. Time per implementation is logged in `dev-log.md` and should be interpreted with this ordering effect in mind (second implementation benefits from domain familiarity).
 
 ---
 
@@ -318,3 +324,57 @@ To reset the database to a clean state:
 ```bash
 docker compose --profile seed run --rm seeder
 ```
+
+---
+
+## 10. Primary Analysis Focus
+
+The benchmark produces data across 5 scenarios. For the final report, the analysis is structured as follows:
+
+### Core analysis (Sections 4–5 of the report)
+
+| Scenario | Role |
+|---|---|
+| CRUD (02) | Baseline comparison — simple operations |
+| Read-heavy (03) | Realistic workload — primary result |
+| Complex queries (04) | Discriminating scenario — most scientifically relevant |
+
+Primary metrics reported: **P95 latency**, **average latency**, **average CPU %**, **average RAM (MB)**, **LOC**, **actual implementation time**.
+
+### Supplementary results (Appendix)
+
+| Scenario | Role |
+|---|---|
+| Smoke (01) | Infrastructure validation only |
+| Stress (05) | Saturation behavior — informative but less reproducible across machines |
+
+> The stress test is included as a complementary data point. Its results are machine-dependent and should not be used as the primary basis for conclusions.
+
+---
+
+## 11. Out of Scope
+
+The following dimensions are explicitly excluded from this study:
+
+- NoSQL databases (MongoDB, Redis, etc.)
+- Horizontal scaling or load balancing
+- Application-level caching (Redis, in-memory)
+- ORM-specific performance tuning (raw queries via Prisma, query batching)
+- Distributed or cloud deployment benchmarks
+- Frontend performance or network-level optimization
+- Comparison of multiple ORMs (only Prisma is tested)
+- TypeScript overhead (both implementations use plain JavaScript)
+
+---
+
+## 12. Threats to Validity
+
+| Threat | Type | Mitigation |
+|---|---|---|
+| Single machine setup | External validity | Results are specific to this hardware; reported machine specs allow comparison |
+| Docker Desktop on WSL2 | Internal validity | Introduces consistent overhead for both implementations equally; does not favor either |
+| Only one ORM tested (Prisma) | Construct validity | Conclusions apply to Prisma specifically; generalisation to "ORMs" is qualified in the report |
+| Dataset not production-scale | External validity | 10 000 users / 30 000 posts is representative of small-to-medium APIs; noted as a limitation |
+| Implementation order effect | Internal validity | sql-api was built first; orm-api benefits from domain familiarity — noted in productivity assessment |
+| k6 running in the same Docker network | Internal validity | Eliminates network jitter; both implementations measured under identical conditions |
+| Single benchmark run | Reliability | Results are from one run session; re-running to confirm key results is recommended before the final report |

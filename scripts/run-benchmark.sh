@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Prevent Git Bash on Windows from converting /scripts/ paths to Windows paths
+export MSYS_NO_PATHCONV=1
+
 # URLs internes au réseau Docker (noms de services docker-compose)
 SQL_URL="http://sql-api:3001"
 ORM_URL="http://orm-api:3002"
@@ -82,13 +85,18 @@ run_scenario() {
     local stats_pid=$!
 
     # Run k6 inside Docker on the same network
+    # Use // prefix to prevent Git Bash path conversion on Windows
+    local k6_scenario="//scripts/scenarios/$(basename "$scenario_file")"
+    local k6_out="//results/$(basename "$out_json")"
+    local k6_summary="//results/$(basename "$summary_json")"
+
     docker compose -f "${ROOT_DIR}/docker-compose.yml" run --rm \
       --no-deps \
       k6 run \
         --env "BASE_URL=${base_url}" \
-        --out "json=/results/$(basename "$out_json")" \
-        --summary-export "/results/$(basename "$summary_json")" \
-        "/scripts/scenarios/$(basename "$scenario_file")" \
+        --out "json=${k6_out}" \
+        --summary-export "${k6_summary}" \
+        "${k6_scenario}" \
       2>&1 | tee "$out_log"
 
     kill "$stats_pid" 2>/dev/null || true
