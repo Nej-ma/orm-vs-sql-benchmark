@@ -121,6 +121,37 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+// PUT /posts/:id  — nested update: post fields + replace tag associations atomically
+router.put("/:id", async (req, res, next) => {
+  try {
+    const prisma = req.app.get("prisma");
+    const { title, content, published, tag_ids } = req.body;
+
+    const data = {};
+    if (title     !== undefined) data.title     = title;
+    if (content   !== undefined) data.content   = content;
+    if (published !== undefined) data.published = published;
+
+    if (Array.isArray(tag_ids)) {
+      data.postTags = {
+        deleteMany: {},
+        ...(tag_ids.length > 0 && { create: tag_ids.map((tagId) => ({ tagId })) }),
+      };
+    }
+
+    const post = await prisma.post.update({
+      where:  { id: parseInt(req.params.id) },
+      data,
+      select: { id: true, userId: true, title: true, content: true,
+                published: true, viewCount: true, createdAt: true },
+    });
+    res.json(post);
+  } catch (err) {
+    if (err.code === "P2025") return res.status(404).json({ error: "Post not found" });
+    next(err);
+  }
+});
+
 // GET /posts/search/by-tag/:slug
 router.get("/search/by-tag/:slug", async (req, res, next) => {
   try {

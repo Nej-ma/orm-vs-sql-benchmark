@@ -11,6 +11,10 @@ results/run_*/*.csv
 !results/run_*/loc_report.txt
 !results/run_*/chart_*.png
 
+# Micro-benchmark raw JSON excluded, summaries kept
+results/06-micro-benchmark_*.json
+!results/06-micro-benchmark_*_summary.json
+
 # Environment files
 .env
 .env.local

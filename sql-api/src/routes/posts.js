@@ -153,6 +153,49 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+// PUT /posts/:id  — nested update: post fields + replace tag associations atomically
+router.put("/:id", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { title, content, published, tag_ids } = req.body;
+
+    const postResult = await client.query(
+      `UPDATE posts
+       SET title     = COALESCE($1, title),
+           content   = COALESCE($2, content),
+           published = COALESCE($3, published)
+       WHERE id = $4
+       RETURNING id, user_id, title, content, published, view_count, created_at`,
+      [title ?? null, content ?? null, published ?? null, req.params.id]
+    );
+    if (!postResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (Array.isArray(tag_ids)) {
+      await client.query("DELETE FROM post_tags WHERE post_id = $1", [req.params.id]);
+      if (tag_ids.length > 0) {
+        const placeholders = tag_ids.map((_, i) => `($1, $${i + 2})`).join(", ");
+        await client.query(
+          `INSERT INTO post_tags (post_id, tag_id) VALUES ${placeholders}`,
+          [req.params.id, ...tag_ids]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    res.json(postResult.rows[0]);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // GET /posts/search/by-tag/:slug  — posts filtrés par tag avec auteur
 router.get("/search/by-tag/:slug", async (req, res, next) => {
   try {
