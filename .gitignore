@@ -10,6 +10,7 @@ results/run_*/*.csv
 !results/run_*/comparison_report.txt
 !results/run_*/loc_report.txt
 !results/run_*/chart_*.png
+!results/run_*/*_docker_stats.csv
 
 # Micro-benchmark raw JSON excluded, summaries kept
 results/06-micro-benchmark_*.json
