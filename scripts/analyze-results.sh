@@ -18,7 +18,7 @@ fi
 OUTPUT_CSV="${RUN_DIR}/comparison.csv"
 OUTPUT_TXT="${RUN_DIR}/comparison_report.txt"
 
-echo "Scenario,Implementation,Avg(ms),Med(ms),P90(ms),P95(ms),P99(ms),Max(ms),ReqTotal,ReqFailed,ErrorRate(%),Throughput(req/s)" > "$OUTPUT_CSV"
+echo "Scenario,Implementation,Avg(ms),Med(ms),P90(ms),P95(ms),P99(ms),Max(ms),ReqTotal,ErrorRate(%),Throughput(req/s)" > "$OUTPUT_CSV"
 
 process_summary() {
   local file=$1
@@ -42,25 +42,29 @@ let data;
 try { data = JSON.parse(fs.readFileSync(file, "utf8")); }
 catch(e) { process.exit(0); }
 
-const dur   = data.metrics?.http_req_duration;
-const fails = data.metrics?.http_req_failed;
-const reqs  = data.metrics?.http_reqs;
+const m    = data.metrics || {};
+// k6 v1.x: metrics values are flat (no .values wrapper)
+const dur   = m.http_req_duration;
+const fails = m.http_req_failed;
+const reqs  = m.http_reqs;
 
 if (!dur) process.exit(0);
 
-const avg  = (dur.values.avg    || 0).toFixed(2);
-const med  = (dur.values.med    || 0).toFixed(2);
-const p90  = (dur.values["p(90)"] || 0).toFixed(2);
-const p95  = (dur.values["p(95)"] || 0).toFixed(2);
-const p99  = (dur.values["p(99)"] || 0).toFixed(2);
-const max  = (dur.values.max    || 0).toFixed(2);
+// Support both old (.values.avg) and new flat (avg) formats
+const v = (obj, key) => obj?.[key] ?? obj?.values?.[key] ?? 0;
 
-const totalReqs   = reqs?.values?.count  || 0;
-const failedReqs  = fails?.values?.passes || 0;
-const errorRate   = fails ? ((fails.values.rate || 0) * 100).toFixed(2) : "0.00";
-const throughput  = reqs ? (reqs.values.rate || 0).toFixed(2) : "0.00";
+const avg  = v(dur, "avg").toFixed(2);
+const med  = v(dur, "med").toFixed(2);
+const p90  = v(dur, "p(90)").toFixed(2);
+const p95  = v(dur, "p(95)").toFixed(2);
+const p99  = (v(dur, "p(99)") || v(dur, "p(95)")).toFixed(2);  // fallback to p95 if p99 absent
+const max  = v(dur, "max").toFixed(2);
 
-console.log(`${scen},${impl},${avg},${med},${p90},${p95},${p99},${max},${totalReqs},${failedReqs},${errorRate},${throughput}`);
+const totalReqs  = v(reqs, "count") || 0;
+const errorRate  = fails ? ((fails.value ?? v(fails, "rate") ?? 0) * 100).toFixed(2) : "0.00";
+const throughput = reqs  ? v(reqs, "rate").toFixed(2) : "0.00";
+
+console.log(`${scen},${impl},${avg},${med},${p90},${p95},${p99},${max},${totalReqs},${errorRate},${throughput}`);
 EOF
 }
 
@@ -111,7 +115,8 @@ for (const [scenario, impls] of Object.entries(byScen)) {
     const p95orm = parseFloat(orm[5]);
     const delta  = ((p95orm - p95sql) / p95sql * 100).toFixed(1);
     const sign   = delta > 0 ? "+" : "";
-    console.log(`  → P95 ORM vs SQL natif : ${sign}${delta}% (${delta > 0 ? "ORM plus lent" : "ORM plus rapide"})`);
+    const verdict = delta > 20 ? "⚠ ORM exceeds threshold" : delta > 0 ? "ORM slower (within threshold)" : "✓ ORM faster";
+    console.log(`  → P95 ORM vs SQL: ${sign}${delta}% — ${verdict}`);
   }
 }
 EOF
