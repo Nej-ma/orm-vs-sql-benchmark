@@ -1,8 +1,15 @@
 # Dependencies
 node_modules/
 
-# Benchmark results (generated, not tracked)
-results/run_*/
+# Benchmark results — raw time-series JSON excluded (too large), summaries and charts tracked
+results/run_*/*.json
+results/run_*/*.log
+results/run_*/*.csv
+!results/run_*/*_summary.json
+!results/run_*/comparison.csv
+!results/run_*/comparison_report.txt
+!results/run_*/loc_report.txt
+!results/run_*/chart_*.png
 
 # Environment files
 .env
